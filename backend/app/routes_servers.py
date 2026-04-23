@@ -92,6 +92,36 @@ async def join_server(
     return await server_to_out(session, server)
 
 
+@router.delete("/{server_id}/membership")
+async def leave_server(
+    server_id: int,
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    server = (
+        await session.execute(select(Server).where(Server.id == server_id))
+    ).scalar_one_or_none()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    mem = (
+        await session.execute(
+            select(Membership).where(
+                Membership.server_id == server_id, Membership.user_id == current.id
+            )
+        )
+    ).scalar_one_or_none()
+    if not mem:
+        raise HTTPException(status_code=404, detail="Not a member")
+    if server.owner_id == current.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Owners can't leave their own server. Delete it instead.",
+        )
+    await session.delete(mem)
+    await session.commit()
+    return {"ok": True}
+
+
 @router.get("/{server_id}/members")
 async def list_members(
     server_id: int,

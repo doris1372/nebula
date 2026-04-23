@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   AtSign,
   Bell,
@@ -35,6 +35,8 @@ import {
 } from 'lucide-react'
 import { AuthScreen } from './AuthScreen'
 import { FriendsScreen } from './FriendsScreen'
+import { CallOverlay, IncomingCallModal } from './CallOverlay'
+import { CallManager } from './call'
 import { connectWS, disconnectWS, emitTypingThrottled, keyOfTarget, useStore } from './store'
 import { api } from './api'
 import type { Attachment, Channel, Message, Server, UserMe, UserPublic } from './types'
@@ -237,16 +239,19 @@ function ChannelsSidebar({
   onCreateChannel,
   onCopyInvite,
   onLogout,
+  onOpenSettings,
+  onLeaveServer,
 }: {
   onCreateChannel: (serverId: number) => void
   onCopyInvite: (code: string) => void
   onLogout: () => void
+  onOpenSettings: () => void
+  onLeaveServer: (serverId: number) => void
 }) {
   const target = useStore((s) => s.target)
   const servers = useStore((s) => s.servers)
   const dms = useStore((s) => s.dms)
   const channelsByServer = useStore((s) => s.channelsByServer)
-  const selectChannel = useStore((s) => s.selectChannel)
   const selectDM = useStore((s) => s.selectDM)
   const user = useStore((s) => s.user)
   const onlineIds = useStore((s) => s.onlineUserIds)
@@ -265,16 +270,24 @@ function ChannelsSidebar({
       <aside className="w-64 bg-ink-900 flex flex-col border-r border-black/40 min-h-0">
         <div className="relative h-16 shrink-0 border-b border-black/40">
           <div className={`absolute inset-0 bg-gradient-to-r ${server?.banner ?? 'from-brand-600 to-accent-400'} opacity-30`} />
-          <button className="relative w-full h-full px-4 flex items-center justify-between text-left hover:bg-white/5 transition">
-            <div className="flex flex-col min-w-0">
+          <div className="relative w-full h-full px-4 flex items-center gap-2">
+            <div className="flex flex-col min-w-0 flex-1">
               <span className="font-semibold text-white truncate">{server?.name ?? 'Server'}</span>
               <span className="text-[11px] text-ink-200 flex items-center gap-1 truncate">
                 <span className="w-1.5 h-1.5 rounded-full bg-mint-400" />
                 {server?.member_count ?? 0} members
               </span>
             </div>
-            <ChevronDown className="w-4 h-4 text-ink-200" />
-          </button>
+            {server && user && server.owner_id !== user.id && (
+              <button
+                onClick={() => onLeaveServer(server.id)}
+                title="Leave server"
+                className="w-8 h-8 flex items-center justify-center rounded-md text-ink-200 hover:text-rose-400 hover:bg-rose-400/10 transition"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="px-3 pt-3 pb-2 flex gap-1.5">
@@ -307,23 +320,13 @@ function ChannelsSidebar({
                 </button>
                 {!isCollapsed && (
                   <div className="mt-0.5 space-y-0.5">
-                    {chans.map((ch) => {
-                      const active = target.kind === 'channel' && target.channelId === ch.id
-                      return (
-                        <button
-                          key={ch.id}
-                          onClick={() => selectChannel(ch.server_id, ch.id)}
-                          className={`w-full group flex items-center gap-2 pl-2 pr-2 py-[7px] rounded-lg text-[15px] transition-colors ${
-                            active
-                              ? 'bg-gradient-to-r from-brand-500/20 to-transparent text-white'
-                              : 'text-ink-300 hover:bg-white/5 hover:text-white'
-                          }`}
-                        >
-                          <ChannelIcon type={ch.type} />
-                          <span className="truncate">{ch.name}</span>
-                        </button>
-                      )
-                    })}
+                    {chans.map((ch) => (
+                      <ChannelRow
+                        key={ch.id}
+                        channel={ch}
+                        active={target.kind === 'channel' && target.channelId === ch.id}
+                      />
+                    ))}
                   </div>
                 )}
               </div>
@@ -331,7 +334,7 @@ function ChannelsSidebar({
           })}
         </div>
 
-        <UserCard user={user} onlineIds={onlineIds} onLogout={onLogout} />
+        <UserCard user={user} onlineIds={onlineIds} onLogout={onLogout} onOpenSettings={onOpenSettings} />
       </aside>
     )
   }
@@ -376,7 +379,7 @@ function ChannelsSidebar({
           )
         })}
       </div>
-      <UserCard user={user} onlineIds={onlineIds} onLogout={onLogout} />
+      <UserCard user={user} onlineIds={onlineIds} onLogout={onLogout} onOpenSettings={onOpenSettings} />
     </aside>
   )
 }
@@ -385,10 +388,12 @@ function UserCard({
   user,
   onlineIds,
   onLogout,
+  onOpenSettings,
 }: {
   user: UserMe | null
   onlineIds: Set<number>
   onLogout: () => void
+  onOpenSettings: () => void
 }) {
   if (!user) return null
   const initials = initialsFrom(user.name)
@@ -400,8 +405,7 @@ function UserCard({
         <div className="text-[11px] text-ink-300 truncate">@{user.handle}</div>
       </div>
       <div className="flex items-center gap-0.5">
-        <IconButton icon={<Mic className="w-[18px] h-[18px]" />} label="Mic" />
-        <IconButton icon={<Headphones className="w-[18px] h-[18px]" />} label="Headphones" />
+        <IconButton icon={<Settings className="w-[18px] h-[18px]" />} label="Profile settings" onClick={onOpenSettings} />
         <IconButton icon={<LogOut className="w-[18px] h-[18px]" />} label="Log out" onClick={onLogout} />
       </div>
     </div>
@@ -436,14 +440,54 @@ function QuickPill({
 
 // ---- Header ----
 
+const subscribeCall = (cb: () => void) => CallManager.subscribe(cb)
+const getCallSnapshot = () => CallManager.snapshot()
+
+function ChannelRow({ channel, active }: { channel: Channel; active: boolean }) {
+  const selectChannel = useStore((s) => s.selectChannel)
+  const joinVoiceChannel = useStore((s) => s.joinVoiceChannel)
+  const call = useSyncExternalStore(subscribeCall, getCallSnapshot, getCallSnapshot)
+  const isVoice = channel.type === 'voice'
+  const inCall = isVoice && call.room === `vc:${channel.id}`
+  const handleClick = () => {
+    if (isVoice) {
+      if (!inCall) void joinVoiceChannel(channel.id).catch((e) => alert(`Call failed: ${(e as Error).message || e}`))
+    } else {
+      void selectChannel(channel.server_id, channel.id)
+    }
+  }
+  return (
+    <button
+      onClick={handleClick}
+      className={`w-full group flex items-center gap-2 pl-2 pr-2 py-[7px] rounded-lg text-[15px] transition-colors ${
+        active || inCall
+          ? 'bg-gradient-to-r from-brand-500/20 to-transparent text-white'
+          : 'text-ink-300 hover:bg-white/5 hover:text-white'
+      }`}
+    >
+      <ChannelIcon type={channel.type} />
+      <span className="truncate">{channel.name}</span>
+      {isVoice && inCall && (
+        <span className="ml-auto flex items-center gap-1 text-[10px] font-semibold text-mint-400 uppercase">
+          <span className="w-1.5 h-1.5 rounded-full bg-mint-400 animate-pulse" />
+          live
+        </span>
+      )}
+    </button>
+  )
+}
+
 function ChannelHeader({
   activeChannel,
   dmPeer,
+  dmId,
 }: {
   activeChannel: Channel | null
   dmPeer: UserPublic | null
+  dmId: number | null
 }) {
-  if (dmPeer) {
+  const startDMCall = useStore((s) => s.startDMCall)
+  if (dmPeer && dmId) {
     return (
       <header className="h-14 shrink-0 px-4 flex items-center gap-3 border-b border-black/40 bg-ink-900/80 backdrop-blur">
         <AtSign className="w-[18px] h-[18px] text-ink-200" />
@@ -451,8 +495,16 @@ function ChannelHeader({
         <span className="w-px h-5 bg-ink-700 mx-1" />
         <span className="text-sm text-ink-300 truncate">@{dmPeer.handle}</span>
         <div className="ml-auto flex items-center gap-1">
-          <IconButton icon={<Phone className="w-5 h-5" />} />
-          <IconButton icon={<Video className="w-5 h-5" />} />
+          <IconButton
+            icon={<Phone className="w-5 h-5" />}
+            label="Voice call"
+            onClick={() => void startDMCall(dmId, dmPeer.id, 'voice').catch((e) => alert(`Call failed: ${e.message || e}`))}
+          />
+          <IconButton
+            icon={<Video className="w-5 h-5" />}
+            label="Video call"
+            onClick={() => void startDMCall(dmId, dmPeer.id, 'video').catch((e) => alert(`Call failed: ${e.message || e}`))}
+          />
           <IconButton icon={<Pin className="w-5 h-5" />} />
         </div>
       </header>
@@ -1189,6 +1241,111 @@ function CreateChannelModal({
   )
 }
 
+const AVATAR_GRADIENTS = [
+  'from-fuchsia-400 to-rose-500',
+  'from-cyan-400 to-blue-600',
+  'from-emerald-400 to-teal-500',
+  'from-amber-400 to-orange-500',
+  'from-violet-400 to-purple-600',
+  'from-indigo-400 to-blue-700',
+  'from-pink-400 to-red-500',
+  'from-lime-400 to-green-600',
+  'from-brand-500 to-accent-500',
+  'from-mint-400 to-mint-500',
+]
+
+function ProfileSettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const user = useStore((s) => s.user)
+  if (!user || !open) return null
+  return <ProfileSettingsModalInner user={user} onClose={onClose} />
+}
+
+function ProfileSettingsModalInner({ user, onClose }: { user: UserMe; onClose: () => void }) {
+  const updateProfile = useStore((s) => s.updateProfile)
+  const [name, setName] = useState(user.name)
+  const [handle, setHandle] = useState(user.handle)
+  const [activity, setActivity] = useState(user.activity ?? '')
+  const [color, setColor] = useState(user.avatar_color)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async () => {
+    setErr('')
+    setBusy(true)
+    try {
+      await updateProfile({
+        name: name.trim() || undefined,
+        handle: handle.trim() || undefined,
+        activity,
+        avatar_color: color,
+      })
+      onClose()
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Profile settings">
+      <div className="flex items-center gap-3 mb-4">
+        <Avatar color={color} initials={initialsFrom(name || user.name)} size={56} />
+        <div>
+          <div className="text-white font-semibold">{name || user.name}</div>
+          <div className="text-sm text-ink-300">@{handle || user.handle}</div>
+        </div>
+      </div>
+      <label className="block text-xs font-semibold uppercase tracking-wider text-ink-300 mb-1">Display name</label>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        maxLength={40}
+        className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 text-white outline-none focus:border-brand-500"
+      />
+      <label className="block mt-3 text-xs font-semibold uppercase tracking-wider text-ink-300 mb-1">Handle</label>
+      <input
+        value={handle}
+        onChange={(e) => setHandle(e.target.value.toLowerCase())}
+        maxLength={24}
+        className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 text-white outline-none focus:border-brand-500"
+      />
+      <label className="block mt-3 text-xs font-semibold uppercase tracking-wider text-ink-300 mb-1">Activity</label>
+      <input
+        value={activity}
+        onChange={(e) => setActivity(e.target.value)}
+        maxLength={80}
+        placeholder="Vibing in Nebula"
+        className="w-full px-3 py-2 rounded-lg bg-ink-800 border border-ink-700 text-white outline-none focus:border-brand-500"
+      />
+      <label className="block mt-3 text-xs font-semibold uppercase tracking-wider text-ink-300 mb-2">Avatar color</label>
+      <div className="grid grid-cols-5 gap-2">
+        {AVATAR_GRADIENTS.map((g) => (
+          <button
+            key={g}
+            type="button"
+            onClick={() => setColor(g)}
+            className={`h-10 rounded-lg bg-gradient-to-br ${g} ring-2 transition ${
+              color === g ? 'ring-white' : 'ring-transparent'
+            }`}
+          />
+        ))}
+      </div>
+      {err && <div className="mt-3 text-sm text-rose-400">{err}</div>}
+      <div className="mt-5 flex justify-end gap-2">
+        <button onClick={onClose} className="px-4 py-2 rounded-lg text-ink-200 hover:bg-white/5">Cancel</button>
+        <button
+          onClick={submit}
+          disabled={busy || !name.trim() || !handle.trim()}
+          className="px-4 py-2 rounded-lg bg-gradient-to-r from-brand-500 to-accent-500 text-white font-semibold disabled:opacity-50"
+        >
+          Save
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 // ---- Root ----
 
 function ChatArea({
@@ -1279,10 +1436,12 @@ function ChatScreen() {
   const selectDM = useStore((s) => s.selectDM)
   const selectHome = useStore((s) => s.selectHome)
 
+  const leaveServer = useStore((s) => s.leaveServer)
   const [muted, setMuted] = useState(false)
   const [createServerOpen, setCreateServerOpen] = useState(false)
   const [joinOpen, setJoinOpen] = useState(false)
   const [createChannelFor, setCreateChannelFor] = useState<number | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const activeChannel =
     target?.kind === 'channel'
@@ -1325,11 +1484,21 @@ function ChatScreen() {
         onCreateChannel={(sid) => setCreateChannelFor(sid)}
         onCopyInvite={onCopyInvite}
         onLogout={logout}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onLeaveServer={(sid) => {
+          const s = servers.find((x) => x.id === sid)
+          if (!s) return
+          if (confirm(`Leave ${s.name}?`)) void leaveServer(sid).catch((e) => alert((e as Error).message))
+        }}
       />
 
       <main className="flex-1 flex flex-col min-w-0 bg-ink-800">
         {target !== null && (
-          <ChannelHeader activeChannel={activeChannel} dmPeer={activeDM?.other_user ?? null} />
+          <ChannelHeader
+            activeChannel={activeChannel}
+            dmPeer={activeDM?.other_user ?? null}
+            dmId={activeDM?.id ?? null}
+          />
         )}
         <div className="flex-1 flex min-h-0">
           {target && user ? (
@@ -1394,6 +1563,9 @@ function ChatScreen() {
       <CreateServerModal open={createServerOpen} onClose={() => setCreateServerOpen(false)} />
       <JoinServerModal open={joinOpen} onClose={() => setJoinOpen(false)} />
       <CreateChannelModal serverId={createChannelFor} open={createChannelFor !== null} onClose={() => setCreateChannelFor(null)} />
+      <ProfileSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <CallOverlay />
+      <IncomingCallModal />
       {/* Silence unused-import lint on Copy / Settings / Search etc used implicitly via icons above */}
       <span className="hidden">
         <Copy />

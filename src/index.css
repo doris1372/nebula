@@ -23,8 +23,11 @@
 
   --color-mint-400: #5eead4;
   --color-mint-500: #2dd4bf;
+  --color-mint-600: #14b8a6;
 
   --color-rose-400: #fb7185;
+  --color-rose-500: #f43f5e;
+  --color-rose-600: #e11d48;
 }
 
 html, body, #root {
