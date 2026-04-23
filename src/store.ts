@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { api, getToken, setToken, API_BASE } from './api'
+import { CallManager } from './call'
 import type { Channel, DM, Friend, Message, Server, UserMe, UserPublic, WSEvent } from './types'
 
 type Target =
@@ -21,6 +22,8 @@ type State = {
   friends: Friend[]
   incoming: Friend[]
   outgoing: Friend[]
+
+  incomingCall: { room: string; from_user: UserPublic } | null
 
   messagesByKey: Record<string, Message[]>
 
@@ -46,6 +49,15 @@ type State = {
   sendFriendRequest: (handle: string) => Promise<Friend>
   acceptFriend: (id: number) => Promise<void>
   removeFriend: (id: number) => Promise<void>
+
+  leaveServer: (serverId: number) => Promise<void>
+  updateProfile: (body: { name?: string; handle?: string; avatar_color?: string; activity?: string }) => Promise<void>
+
+  startDMCall: (dmId: number, targetUserId: number, kind: 'voice' | 'video') => Promise<void>
+  acceptIncomingCall: (kind: 'voice' | 'video') => Promise<void>
+  declineIncomingCall: () => void
+  joinVoiceChannel: (channelId: number) => Promise<void>
+  leaveCall: () => Promise<void>
 
   selectChannel: (serverId: number, channelId: number) => Promise<void>
   selectDM: (dmId: number) => Promise<void>
@@ -78,6 +90,7 @@ export const useStore = create<State>((set, get) => ({
   friends: [],
   incoming: [],
   outgoing: [],
+  incomingCall: null,
   messagesByKey: {},
   target: null,
   booted: false,
@@ -91,6 +104,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       const me = await api.me()
       set({ user: me })
+      CallManager.setMyUserId(me.id)
       await Promise.all([get().loadServers(), get().loadDMs(), get().loadFriends()])
       const s = get().servers[0]
       if (s) {
@@ -114,6 +128,7 @@ export const useStore = create<State>((set, get) => ({
       const r = await api.signup(b)
       setToken(r.token)
       set({ user: r.user })
+      CallManager.setMyUserId(r.user.id)
       await Promise.all([get().loadServers(), get().loadDMs(), get().loadFriends()])
       const s = get().servers[0]
       if (s) {
@@ -136,6 +151,7 @@ export const useStore = create<State>((set, get) => ({
       const r = await api.login(b)
       setToken(r.token)
       set({ user: r.user })
+      CallManager.setMyUserId(r.user.id)
       await Promise.all([get().loadServers(), get().loadDMs(), get().loadFriends()])
       const s = get().servers[0]
       if (s) {
@@ -153,6 +169,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   logout: () => {
+    void CallManager.leave()
     setToken(null)
     set({
       user: null,
@@ -167,6 +184,7 @@ export const useStore = create<State>((set, get) => ({
       friends: [],
       incoming: [],
       outgoing: [],
+      incomingCall: null,
     })
   },
 
@@ -217,6 +235,56 @@ export const useStore = create<State>((set, get) => ({
       incoming: s.incoming.filter((x) => x.id !== id),
       outgoing: s.outgoing.filter((x) => x.id !== id),
     }))
+  },
+
+  leaveServer: async (serverId) => {
+    await api.leaveServer(serverId)
+    set((s) => {
+      const { [serverId]: _dropped, ...rest } = s.channelsByServer
+      void _dropped
+      const { [serverId]: _m, ...restMembers } = s.membersByServer
+      void _m
+      const newTarget = s.target?.kind === 'channel' && s.target.serverId === serverId ? null : s.target
+      return {
+        servers: s.servers.filter((x) => x.id !== serverId),
+        channelsByServer: rest,
+        membersByServer: restMembers,
+        target: newTarget,
+      }
+    })
+  },
+
+  updateProfile: async (body) => {
+    const me = await api.updateMe(body)
+    set({ user: me })
+  },
+
+  startDMCall: async (dmId, targetUserId, kind) => {
+    const room = `dm:${dmId}`
+    await CallManager.start(room, kind)
+    wsSend({ type: 'call.invite', data: { room, target_user_id: targetUserId } })
+  },
+
+  acceptIncomingCall: async (kind) => {
+    const inv = get().incomingCall
+    if (!inv) return
+    set({ incomingCall: null })
+    await CallManager.start(inv.room, kind)
+  },
+
+  declineIncomingCall: () => {
+    const inv = get().incomingCall
+    if (!inv) return
+    wsSend({ type: 'call.decline', data: { room: inv.room, target_user_id: inv.from_user.id } })
+    set({ incomingCall: null })
+  },
+
+  joinVoiceChannel: async (channelId) => {
+    await CallManager.start(`vc:${channelId}`, 'voice')
+  },
+
+  leaveCall: async () => {
+    await CallManager.leave()
   },
 
   loadChannels: async (serverId: number) => {
@@ -381,6 +449,30 @@ export const useStore = create<State>((set, get) => ({
       }))
       return
     }
+    if (evt.type === 'call.incoming') {
+      set({ incomingCall: evt.data })
+      return
+    }
+    if (evt.type === 'call.declined') {
+      // nothing blocking — user may see a toast; for now just ignore silently
+      return
+    }
+    if (evt.type === 'call.joined') {
+      void CallManager.onJoined(evt.data.members)
+      return
+    }
+    if (evt.type === 'call.peer_join') {
+      CallManager.onPeerJoin(evt.data.user)
+      return
+    }
+    if (evt.type === 'call.peer_leave') {
+      CallManager.onPeerLeave(evt.data.user_id)
+      return
+    }
+    if (evt.type === 'call.signal') {
+      void CallManager.onSignal(evt.data.from_user_id, evt.data.payload)
+      return
+    }
     if (evt.type === 'friend.remove') {
       const fid = evt.data.friendship_id
       set((s) => ({
@@ -460,7 +552,7 @@ export function disconnectWS() {
   ws = null
 }
 
-function wsSend(payload: unknown) {
+export function wsSend(payload: unknown) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     try {
       ws.send(JSON.stringify(payload))

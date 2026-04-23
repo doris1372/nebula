@@ -41,6 +41,14 @@ class UserPublic(BaseModel):
     status: str = "online"
 
 
+# Profile
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    handle: Optional[str] = Field(default=None, min_length=2, max_length=24, pattern=r"^[a-z0-9_.-]+$")
+    avatar_color: Optional[str] = Field(default=None, max_length=80)
+    activity: Optional[str] = Field(default=None, max_length=80)
+
+
 # Servers
 class ServerCreate(BaseModel):
     name: str = Field(min_length=1, max_length=60)

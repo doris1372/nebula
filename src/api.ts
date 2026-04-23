@@ -61,6 +61,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
   me: () => req<UserMe>('/api/auth/me'),
+  updateMe: (body: { name?: string; handle?: string; avatar_color?: string; activity?: string }) =>
+    req<UserMe>('/api/auth/me', { method: 'PATCH', body: JSON.stringify(body) }),
 
   // Servers
   listServers: () => req<Server[]>('/api/servers'),
@@ -72,6 +74,8 @@ export const api = {
     req<UserPublic[]>(`/api/servers/${serverId}/members`),
   listChannels: (serverId: number) =>
     req<Channel[]>(`/api/servers/${serverId}/channels`),
+  leaveServer: (serverId: number) =>
+    req<void>(`/api/servers/${serverId}/membership`, { method: 'DELETE' }),
   createChannel: (serverId: number, body: { name: string; type?: string; category?: string; topic?: string }) =>
     req<Channel>(`/api/servers/${serverId}/channels`, { method: 'POST', body: JSON.stringify(body) }),
 

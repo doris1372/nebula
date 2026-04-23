@@ -5,7 +5,7 @@ from sqlmodel import select
 from .auth import create_token, get_current_user, hash_password, verify_password
 from .db import get_session
 from .models import Channel, Membership, Server, User
-from .schemas import AuthResponse, LoginRequest, SignupRequest, UserOut
+from .schemas import AuthResponse, LoginRequest, ProfileUpdate, SignupRequest, UserOut
 from .utils import initials_of, make_invite_code
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -90,4 +90,29 @@ async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)
 
 @router.get("/me", response_model=UserOut)
 async def me(current: User = Depends(get_current_user)):
+    return user_out(current)
+
+
+@router.patch("/me", response_model=UserOut)
+async def update_me(
+    body: ProfileUpdate,
+    current: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    if body.handle and body.handle != current.handle:
+        existing = (
+            await session.execute(select(User).where(User.handle == body.handle))
+        ).scalar_one_or_none()
+        if existing and existing.id != current.id:
+            raise HTTPException(status_code=400, detail="Handle already taken")
+        current.handle = body.handle
+    if body.name is not None:
+        current.name = body.name
+    if body.avatar_color is not None:
+        current.avatar_color = body.avatar_color
+    if body.activity is not None:
+        current.activity = body.activity or None
+    session.add(current)
+    await session.commit()
+    await session.refresh(current)
     return user_out(current)

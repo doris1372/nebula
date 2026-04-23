@@ -98,4 +98,10 @@ export type WSEvent =
   | { type: 'friend.request'; data: Friend }
   | { type: 'friend.accept'; data: Friend }
   | { type: 'friend.remove'; data: { friendship_id: number; user_id: number } }
+  | { type: 'call.incoming'; data: { room: string; from_user: UserPublic } }
+  | { type: 'call.declined'; data: { room: string; user_id: number } }
+  | { type: 'call.joined'; data: { room: string; members: UserPublic[] } }
+  | { type: 'call.peer_join'; data: { room: string; user: UserPublic } }
+  | { type: 'call.peer_leave'; data: { room: string; user_id: number } }
+  | { type: 'call.signal'; data: { room: string; from_user_id: number; payload: { type?: string; sdp?: string; candidate?: RTCIceCandidateInit } } }
   | { type: 'pong' }
