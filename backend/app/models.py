@@ -74,3 +74,19 @@ class DirectMessage(SQLModel, table=True):
     user_a_id: int = Field(foreign_key="user.id", index=True)
     user_b_id: int = Field(foreign_key="user.id", index=True)
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class Friendship(SQLModel, table=True):
+    """
+    Represents a friend relationship or friend request.
+    user_a_id < user_b_id to guarantee a single row per pair.
+    status: pending | accepted | blocked
+    requested_by_id: who initiated the request (for pending state)
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_a_id: int = Field(foreign_key="user.id", index=True)
+    user_b_id: int = Field(foreign_key="user.id", index=True)
+    status: str = "pending"
+    requested_by_id: int = Field(foreign_key="user.id")
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)

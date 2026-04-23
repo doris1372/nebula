@@ -120,6 +120,24 @@ class DMOut(BaseModel):
     other_user: UserPublic
 
 
+# Friends
+class FriendRequestCreate(BaseModel):
+    handle: str = Field(min_length=2, max_length=24)
+
+
+class FriendOut(BaseModel):
+    id: int  # friendship id
+    user: UserPublic
+    status: str  # "accepted" | "pending_in" | "pending_out"
+    since: datetime
+
+
+class FriendsList(BaseModel):
+    friends: list[FriendOut]
+    incoming: list[FriendOut]
+    outgoing: list[FriendOut]
+
+
 # WS envelopes
 class WSEvent(BaseModel):
     type: str

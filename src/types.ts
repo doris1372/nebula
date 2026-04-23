@@ -73,6 +73,21 @@ export type DM = {
   other_user: UserPublic
 }
 
+export type FriendStatus = 'accepted' | 'pending_in' | 'pending_out'
+
+export type Friend = {
+  id: number
+  user: UserPublic
+  status: FriendStatus
+  since: string
+}
+
+export type FriendsList = {
+  friends: Friend[]
+  incoming: Friend[]
+  outgoing: Friend[]
+}
+
 export type WSEvent =
   | { type: 'hello'; data: { user_id: number; online_user_ids: number[] } }
   | { type: 'presence'; data: { user_id: number; status: 'online' | 'offline' } }
@@ -80,4 +95,7 @@ export type WSEvent =
   | { type: 'message.update'; data: Message }
   | { type: 'message.delete'; data: { id: number; channel_id?: number; dm_id?: number } }
   | { type: 'typing'; data: { user_id: number; user_name: string; channel_id?: number; dm_id?: number } }
+  | { type: 'friend.request'; data: Friend }
+  | { type: 'friend.accept'; data: Friend }
+  | { type: 'friend.remove'; data: { friendship_id: number; user_id: number } }
   | { type: 'pong' }
