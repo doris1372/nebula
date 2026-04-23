@@ -10,7 +10,19 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+.vite
 *.local
+
+# Python / backend
+__pycache__/
+*.pyc
+.venv/
+backend/.venv/
+backend/**/__pycache__/
+
+# Local data
+/data
+nebula.db*
 
 # Editor directories and files
 .vscode/*
