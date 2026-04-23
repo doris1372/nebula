@@ -1,4 +1,4 @@
-import type { Channel, DM, Message, Server, UserMe, UserPublic } from './types'
+import type { Channel, DM, Friend, FriendsList, Message, Server, UserMe, UserPublic } from './types'
 
 const API_URL =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ||
@@ -105,6 +105,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  // Friends
+  listFriends: () => req<FriendsList>('/api/friends'),
+  sendFriendRequest: (handle: string) =>
+    req<Friend>('/api/friends/request', { method: 'POST', body: JSON.stringify({ handle }) }),
+  acceptFriend: (id: number) =>
+    req<Friend>(`/api/friends/${id}/accept`, { method: 'POST' }),
+  removeFriend: (id: number) => req<void>(`/api/friends/${id}`, { method: 'DELETE' }),
+  searchUsers: (q: string) => req<UserPublic[]>(`/api/friends/search?q=${encodeURIComponent(q)}`),
 
   // Files
   uploadFile: async (file: File) => {

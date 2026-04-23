@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { api, getToken, setToken, API_BASE } from './api'
-import type { Channel, DM, Message, Server, UserMe, UserPublic, WSEvent } from './types'
+import type { Channel, DM, Friend, Message, Server, UserMe, UserPublic, WSEvent } from './types'
 
 type Target =
   | { kind: 'channel'; serverId: number; channelId: number }
@@ -18,6 +18,10 @@ type State = {
   onlineUserIds: Set<number>
   typing: Record<string, { user_id: number; user_name: string; at: number }[]>
 
+  friends: Friend[]
+  incoming: Friend[]
+  outgoing: Friend[]
+
   messagesByKey: Record<string, Message[]>
 
   target: Target | null
@@ -32,12 +36,16 @@ type State = {
 
   loadServers: () => Promise<void>
   loadDMs: () => Promise<void>
+  loadFriends: () => Promise<void>
   loadChannels: (serverId: number) => Promise<void>
   loadMembers: (serverId: number) => Promise<void>
   createServer: (name: string) => Promise<Server>
   joinServer: (code: string) => Promise<Server>
   createChannel: (serverId: number, name: string, type?: string) => Promise<Channel>
   openDM: (userId: number) => Promise<DM>
+  sendFriendRequest: (handle: string) => Promise<Friend>
+  acceptFriend: (id: number) => Promise<void>
+  removeFriend: (id: number) => Promise<void>
 
   selectChannel: (serverId: number, channelId: number) => Promise<void>
   selectDM: (dmId: number) => Promise<void>
@@ -67,6 +75,9 @@ export const useStore = create<State>((set, get) => ({
   membersByServer: {},
   onlineUserIds: new Set(),
   typing: {},
+  friends: [],
+  incoming: [],
+  outgoing: [],
   messagesByKey: {},
   target: null,
   booted: false,
@@ -80,7 +91,7 @@ export const useStore = create<State>((set, get) => ({
     try {
       const me = await api.me()
       set({ user: me })
-      await Promise.all([get().loadServers(), get().loadDMs()])
+      await Promise.all([get().loadServers(), get().loadDMs(), get().loadFriends()])
       const s = get().servers[0]
       if (s) {
         await get().loadChannels(s.id)
@@ -103,8 +114,7 @@ export const useStore = create<State>((set, get) => ({
       const r = await api.signup(b)
       setToken(r.token)
       set({ user: r.user })
-      await get().loadServers()
-      await get().loadDMs()
+      await Promise.all([get().loadServers(), get().loadDMs(), get().loadFriends()])
       const s = get().servers[0]
       if (s) {
         await get().loadChannels(s.id)
@@ -126,8 +136,7 @@ export const useStore = create<State>((set, get) => ({
       const r = await api.login(b)
       setToken(r.token)
       set({ user: r.user })
-      await get().loadServers()
-      await get().loadDMs()
+      await Promise.all([get().loadServers(), get().loadDMs(), get().loadFriends()])
       const s = get().servers[0]
       if (s) {
         await get().loadChannels(s.id)
@@ -155,6 +164,9 @@ export const useStore = create<State>((set, get) => ({
       target: null,
       onlineUserIds: new Set(),
       typing: {},
+      friends: [],
+      incoming: [],
+      outgoing: [],
     })
   },
 
@@ -166,6 +178,45 @@ export const useStore = create<State>((set, get) => ({
   loadDMs: async () => {
     const dms = await api.listDMs()
     set({ dms })
+  },
+
+  loadFriends: async () => {
+    const f = await api.listFriends()
+    set({ friends: f.friends, incoming: f.incoming, outgoing: f.outgoing })
+  },
+
+  sendFriendRequest: async (handle) => {
+    const f = await api.sendFriendRequest(handle)
+    if (f.status === 'accepted') {
+      set((s) => ({
+        friends: [...s.friends, f],
+        incoming: s.incoming.filter((x) => x.id !== f.id),
+        outgoing: s.outgoing.filter((x) => x.id !== f.id),
+      }))
+    } else if (f.status === 'pending_out') {
+      set((s) => ({
+        outgoing: s.outgoing.some((x) => x.id === f.id) ? s.outgoing : [...s.outgoing, f],
+      }))
+    }
+    return f
+  },
+
+  acceptFriend: async (id) => {
+    const f = await api.acceptFriend(id)
+    set((s) => ({
+      friends: [...s.friends.filter((x) => x.id !== f.id), f],
+      incoming: s.incoming.filter((x) => x.id !== id),
+      outgoing: s.outgoing.filter((x) => x.id !== id),
+    }))
+  },
+
+  removeFriend: async (id) => {
+    await api.removeFriend(id)
+    set((s) => ({
+      friends: s.friends.filter((x) => x.id !== id),
+      incoming: s.incoming.filter((x) => x.id !== id),
+      outgoing: s.outgoing.filter((x) => x.id !== id),
+    }))
   },
 
   loadChannels: async (serverId: number) => {
@@ -312,6 +363,31 @@ export const useStore = create<State>((set, get) => ({
         const cur = s.messagesByKey[key] || []
         return { messagesByKey: { ...s.messagesByKey, [key]: cur.filter((x) => x.id !== d.id) } }
       })
+      return
+    }
+    if (evt.type === 'friend.request') {
+      const f = evt.data
+      set((s) => ({
+        incoming: s.incoming.some((x) => x.id === f.id) ? s.incoming : [...s.incoming, f],
+      }))
+      return
+    }
+    if (evt.type === 'friend.accept') {
+      const f = evt.data
+      set((s) => ({
+        friends: [...s.friends.filter((x) => x.id !== f.id), f],
+        outgoing: s.outgoing.filter((x) => x.id !== f.id),
+        incoming: s.incoming.filter((x) => x.id !== f.id),
+      }))
+      return
+    }
+    if (evt.type === 'friend.remove') {
+      const fid = evt.data.friendship_id
+      set((s) => ({
+        friends: s.friends.filter((x) => x.id !== fid),
+        incoming: s.incoming.filter((x) => x.id !== fid),
+        outgoing: s.outgoing.filter((x) => x.id !== fid),
+      }))
       return
     }
     if (evt.type === 'typing') {

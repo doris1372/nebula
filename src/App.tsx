@@ -34,6 +34,7 @@ import {
   X,
 } from 'lucide-react'
 import { AuthScreen } from './AuthScreen'
+import { FriendsScreen } from './FriendsScreen'
 import { connectWS, disconnectWS, emitTypingThrottled, keyOfTarget, useStore } from './store'
 import { api } from './api'
 import type { Attachment, Channel, Message, Server, UserMe, UserPublic } from './types'
@@ -130,6 +131,7 @@ function ServerRail({
   const loadMembers = useStore((s) => s.loadMembers)
   const selectHome = useStore((s) => s.selectHome)
   const channelsByServer = useStore((s) => s.channelsByServer)
+  const incomingCount = useStore((s) => s.incoming.length)
 
   const activeServerId = target?.kind === 'channel' ? target.serverId : null
 
@@ -143,9 +145,14 @@ function ServerRail({
 
   return (
     <aside className="w-[78px] bg-ink-950 flex flex-col items-center py-3 gap-2 border-r border-black/40">
-      <ServerPill active={target === null} onClick={selectHome} tooltip="Direct Messages">
-        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center">
+      <ServerPill active={target === null} onClick={selectHome} tooltip="Friends & DMs">
+        <div className="relative w-12 h-12 rounded-2xl bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center">
           <Sparkles className="w-6 h-6 text-white" strokeWidth={2.2} />
+          {incomingCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 ring-2 ring-ink-950 text-white text-[10px] font-bold flex items-center justify-center">
+              {incomingCount}
+            </span>
+          )}
         </div>
       </ServerPill>
 
@@ -1184,22 +1191,6 @@ function CreateChannelModal({
 
 // ---- Root ----
 
-function HomeEmpty() {
-  return (
-    <div className="flex-1 flex items-center justify-center text-center p-10">
-      <div>
-        <div className="w-16 h-16 rounded-3xl bg-gradient-to-br from-brand-500 to-accent-500 flex items-center justify-center mx-auto shadow-xl shadow-brand-500/30">
-          <Sparkles className="w-8 h-8 text-white" />
-        </div>
-        <h2 className="mt-4 text-2xl font-bold text-white">Welcome to Nebula</h2>
-        <p className="mt-1 text-ink-200 max-w-sm mx-auto">
-          Pick a server on the left, or open a DM. Create your own space with the <span className="text-brand-400 font-medium">+</span> button.
-        </p>
-      </div>
-    </div>
-  )
-}
-
 function ChatArea({
   user,
   activeChannel,
@@ -1337,10 +1328,12 @@ function ChatScreen() {
       />
 
       <main className="flex-1 flex flex-col min-w-0 bg-ink-800">
-        <ChannelHeader activeChannel={activeChannel} dmPeer={activeDM?.other_user ?? null} />
+        {target !== null && (
+          <ChannelHeader activeChannel={activeChannel} dmPeer={activeDM?.other_user ?? null} />
+        )}
         <div className="flex-1 flex min-h-0">
-          <div className="flex-1 flex flex-col min-w-0 bg-[radial-gradient(ellipse_at_top,rgba(139,92,246,0.08),transparent_50%)]">
-            {target && user ? (
+          {target && user ? (
+            <div className="flex-1 flex flex-col min-w-0 bg-[radial-gradient(ellipse_at_top,rgba(139,92,246,0.08),transparent_50%)]">
               <ChatArea
                 key={targetKey}
                 user={user}
@@ -1349,10 +1342,10 @@ function ChatScreen() {
                 msgs={msgs}
                 placeholder={placeholder}
               />
-            ) : (
-              <HomeEmpty />
-            )}
-          </div>
+            </div>
+          ) : (
+            <FriendsScreen onOpenDM={onOpenDM} />
+          )}
           {target?.kind === 'channel' && <MembersPanel serverId={target.serverId} onOpenDM={onOpenDM} />}
         </div>
 
